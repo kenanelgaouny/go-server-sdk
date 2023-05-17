@@ -199,14 +199,23 @@ func (w *persistentDataStoreWrapper) Upsert(
 				}
 			} else {
 				// there was a concurrent modification elsewhere - update the cache to get the new state
-				w.cache.Delete(cacheKey)
-				w.cache.Delete(allCacheKey)
-				_, _ = w.Get(kind, key) // doing this query repopulates the cache
+				if w.hasInfiniteCache() {
+					if data, present := w.cache.Get(allCacheKey); present {
+						if items, ok := data.([]st.KeyedItemDescriptor); ok {
+							w.cache.Set(allCacheKey, updateSingleItem(items, key, newItem), cache.DefaultExpiration)
+						}
+					}
+				} else {
+					w.cache.Delete(cacheKey)
+					w.cache.Delete(allCacheKey)
+					_, _ = w.Get(kind, key) // doing this query repopulates the cache
+				}
 			}
 		} else {
 			// The underlying store returned an error. If the cache has an infinite TTL, then we should go
 			// ahead and update the cache so that it always has the latest data; we may be able to use the
 			// cached data to repopulate the store later if it starts working again.
+			w.loggers.Errorf("offline case")
 			if w.hasInfiniteCache() {
 				w.cache.Set(cacheKey, newItem, cache.DefaultExpiration)
 				cachedItems := []st.KeyedItemDescriptor{}
@@ -215,6 +224,7 @@ func (w *persistentDataStoreWrapper) Upsert(
 						cachedItems = items
 					}
 				}
+				w.loggers.Error(cachedItems)
 				w.cache.Set(allCacheKey, updateSingleItem(cachedItems, key, newItem), cache.DefaultExpiration)
 			}
 		}
